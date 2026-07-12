@@ -4,7 +4,7 @@ FROM python:3.11-slim
 
 # System deps + Node 24 for frontend build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential ffmpeg curl gosu \
+    git build-essential ffmpeg curl gosu unzip \
     ca-certificates curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
