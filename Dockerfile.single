@@ -73,7 +73,8 @@ RUN sed -i \
 COPY --chown=voicebox:voicebox backend/ /app/backend/
 
 # Entrypoint + torch compile patch
-COPY --chmod=755 scripts/rocm-entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/rocm-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
 COPY patch_compile.py /app/patch_compile.py
 
 # Data dirs
