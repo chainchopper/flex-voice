@@ -1,0 +1,109 @@
+# Flex Voice — GPU-accelerated single-stage build
+# RTX 5090 (Blackwell sm_120), CUDA 12.9, PyTorch stable cu129
+# Merged from upstream f2cf2a7 — adds ROCm/cloud/entrypoint support
+FROM nvidia/cuda:12.9.0-devel-ubuntu24.04
+
+# System deps + Python 3.12 + Node 24 (for frontend build)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-dev python3.12-venv python3-pip \
+    git build-essential ffmpeg curl espeak-ng gosu \
+    ca-certificates curl gnupg \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Node 24 for frontend build (required by @icons-pack/react-simple-icons)
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install bun for frontend build
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
+
+RUN groupadd -r voicebox && \
+    useradd -r -g voicebox -m -s /bin/bash voicebox
+
+WORKDIR /app
+
+# Create virtualenv (PEP 668 workaround for Ubuntu 24.04)
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip
+
+# PyTorch stable CUDA 12.9 (Blackwell sm_120 support, no nightly bugs)
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu129
+
+# Voicebox Python deps
+COPY backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --no-deps chatterbox-tts
+RUN pip install --no-cache-dir --no-deps hume-tada
+RUN pip install --no-cache-dir git+https://github.com/QwenLM/Qwen3-TTS.git
+
+# === Build frontend from source (gets new cloud/GPU settings pages) ===
+COPY package.json bun.lock CHANGELOG.md ./
+COPY app/ ./app/
+COPY web/ ./web/
+RUN sed -i '/"tauri"/d; /"landing"/d' package.json && \
+    sed -i -z 's/,\n  ]/\n  ]/' package.json && \
+    bun install --no-save && \
+    cd web && bunx --bun vite build
+
+# === Flex Voice branding injection ===
+# Copy custom favicon
+COPY flex-voice.svg /app/web/dist/flex-voice.svg
+
+# Inject purple theme into built index.html
+RUN sed -i \
+    -e 's|<link rel="icon".*/>|<link rel="icon" type="image/svg+xml" href="/flex-voice.svg" />|' \
+    -e 's|<title>.*</title>|<title>Flex Voice by Fanalogy</title>|' \
+    /app/web/dist/index.html && \
+    sed -i '/<head>/a\
+    <style>\
+      :root {\
+        --primary: 243 83% 67% !important;\
+        --primary-foreground: 0 0% 100% !important;\
+        --accent: 243 83% 67% !important;\
+        --accent-foreground: 0 0% 100% !important;\
+        --chart-4: 243 74% 66% !important;\
+        --chart-1: 262 83% 58% !important;\
+        --sidebar: 0 0% 4% !important;\
+      }\
+      .dark {\
+        --primary: 243 83% 67% !important;\
+        --primary-foreground: 0 0% 100% !important;\
+        --accent: 243 83% 67% !important;\
+        --accent-foreground: 0 0% 100% !important;\
+      }\
+      .loader-hidden > div > div {\
+        background-color: hsl(243 83% 67%) !important;\
+      }\
+    </style>' \
+    /app/web/dist/index.html
+
+# Backend code
+COPY --chown=voicebox:voicebox backend/ /app/backend/
+
+# Entrypoint + torch compile patch
+COPY --chmod=755 scripts/rocm-entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY patch_compile.py /app/patch_compile.py
+
+# Data dirs
+RUN mkdir -p /app/data/generations /app/data/profiles /app/data/cache \
+    && chown -R voicebox:voicebox /app/data
+
+USER voicebox
+
+EXPOSE 17493
+
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV CUDA_VISIBLE_DEVICES=0
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD curl -f http://localhost:17493/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "17493"]
