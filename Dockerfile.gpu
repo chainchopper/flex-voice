@@ -84,10 +84,13 @@ RUN sed -i \
     </style>' \
     /app/web/dist/index.html
 
+# Move built frontend to where upstream expects it (/app/frontend/)
+RUN cp -a /app/web/dist /app/frontend && chown -R voicebox:voicebox /app/frontend
+
 # Backend code
 COPY --chown=voicebox:voicebox backend/ /app/backend/
 
-# Entrypoint + torch compile patch
+# Copy entrypoint but don't use it as ENTRYPOINT (gosu breaks on NVIDIA Docker)
 COPY scripts/rocm-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 COPY patch_compile.py /app/patch_compile.py
@@ -106,5 +109,5 @@ ENV CUDA_VISIBLE_DEVICES=0
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -f http://localhost:17493/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# No ENTRYPOINT — run uvicorn directly (gosu/entrypoint breaks on NVIDIA Docker)
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "17493"]
