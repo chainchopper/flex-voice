@@ -7,6 +7,7 @@ FROM nvidia/cuda:12.9.0-devel-ubuntu24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-dev python3.12-venv python3-pip \
     git build-essential ffmpeg curl espeak-ng gosu unzip \
+    sox libsox-dev \
     ca-certificates curl gnupg \
     && rm -rf /var/lib/apt/lists/* \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
@@ -42,6 +43,10 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --no-cache-dir --no-deps chatterbox-tts
 RUN pip install --no-cache-dir --no-deps hume-tada
 RUN pip install --no-cache-dir git+https://github.com/QwenLM/Qwen3-TTS.git
+
+# Flash Attention 2 — real speedup (2-4x), not cosmetic. Compiles from source (~20 min).
+# Requires CUDA devel image (we're on nvidia/cuda:12.9.0-devel, so we have the toolkit).
+RUN pip install --no-cache-dir flash-attn --no-build-isolation
 
 # === Build frontend from source (gets new cloud/GPU settings pages) ===
 COPY package.json bun.lock CHANGELOG.md ./
@@ -105,6 +110,7 @@ EXPOSE 17493
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV CUDA_VISIBLE_DEVICES=0
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -f http://localhost:17493/health || exit 1
