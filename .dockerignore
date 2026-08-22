@@ -8,7 +8,7 @@ tauri/
 landing/
 docs/
 mlx-test/
-scripts/
+scripts/*
 !scripts/rocm-entrypoint.sh
 
 # Dependencies & build artifacts (rebuilt in Docker)
